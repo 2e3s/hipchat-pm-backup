@@ -84,6 +84,30 @@ final class ExportUserHistory extends Command
     }
 
     /**
+     * @param $file Resource backup file
+     * @param array $result History search result items
+     */
+    private function writeData($file, array $result)
+    {
+        usort($result, function ($row1, $row2) {
+            return ($row1['date'] < $row2['date']) ? -1 : 1;
+        });
+        foreach ($result as $row) {
+            if ($row['type'] !== 'message') {
+                continue;
+            }
+            $time = date('Y-m-d H:i:s', strtotime($row['date']));
+            $fromName = $row['from']['name'];
+            $fromMention = $row['from']['mention_name'];
+            fwrite(
+                $file,
+                "{$time} -- {$fromName} (@{$fromMention})" . PHP_EOL
+                . $row['message'] . PHP_EOL
+            );
+        }
+    }
+
+    /**
      *
      * @param string $token
      * @param string $user
@@ -96,10 +120,18 @@ final class ExportUserHistory extends Command
         $limit = 1000;
         $offset = 0;
 
+        // Keep windows compatibility
+        $filename = str_replace(':', '-', "{$now}.{$user}.txt");
+
+        $file = fopen("{$this->dir}/{$filename}", 'w');
+        if ($file === false) {
+            throw new RuntimeException("Impossible to write into {$filename}");
+        } else {
+            echo "File [{$filename}] created", PHP_EOL;
+        }
+
         try {
             $data = [];
-            $page = [];
-
             do {
                 echo "Fetching the {$limit} records from {$offset}...", PHP_EOL;
 
@@ -116,30 +148,24 @@ final class ExportUserHistory extends Command
                             'max-results' => $limit,
                             'start-index' => $offset,
                             'date' => $now,
+                            'end-date' => null,
                         ],
                     ]
                 );
 
-                $result = json_decode((string) $response->getBody(), true);
-                
+               $result = json_decode((string) $response->getBody(), true);
+
                 if (!empty($result['items'])) {
-                    $page = $result['items'];
-                    $data = array_merge($data, $page);
-                    
+                    $data = array_merge($data, $result['items']);
+
                     $offset += $limit;
                 }
-            } while ($page);
-
-            // Keep windows compatibility
-            $file = str_replace(':', '-', "{$now}.{$user}.json");
-
-            if (file_put_contents("{$this->dir}/{$file}", json_encode($data, JSON_PRETTY_PRINT)) === false) {
-                throw new RuntimeException('Impossible to write the file');
-            }
-            
-            echo "File [{$file}] created", PHP_EOL;
+            } while (!empty($result['items']));
+            $this->writeData($file, $data);
         } catch (ClientException $e) {
             echo $e->getMessage(), PHP_EOL;
         }
+
+        fclose($file);
     }
 }
